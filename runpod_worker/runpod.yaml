@@ -1,0 +1,3 @@
+runtime: python3
+entrypoint: runpod_worker/handler.py
+handler: handler

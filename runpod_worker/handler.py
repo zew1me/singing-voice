@@ -76,7 +76,8 @@ def _resolve_asset(
         env_path = Path(env_value)
         if env_path.exists():
             return env_path
-        raise FileNotFoundError(f"{env_var} points to a missing file: {env_path}")
+        # Fall back to request-supplied assets when env points to a stale path.
+        print(f"Warning: {env_var} points to a missing file: {env_path}; falling back to payload.")
 
     b64_value = inputs.get(b64_key)
     if isinstance(b64_value, str):

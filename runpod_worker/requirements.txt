@@ -1,2 +1,21 @@
+# Worker runtime. torch/torchaudio are installed separately (CUDA wheels) in the Dockerfile.
+#
+# Seed-VC (pinned commit, see SEED_VC_REF in the Dockerfile) needs these for the
+# 44.1 kHz f0-conditioned singing model. Upstream's requirements.txt also pulls in
+# nightly torch, gradio, GUI and training packages; none are needed for inference.
+transformers==4.46.3
+numpy==1.26.4
+scipy==1.13.1
+librosa==0.10.2
+soundfile==0.12.1
+munch==4.0.0
+einops==0.8.0
+descript-audio-codec==1.0.0
+huggingface-hub>=0.28.1,<1.0
+pyyaml
+tqdm
+matplotlib
+
+# RunPod serverless + URL transport
 runpod>=1.6.0
 requests>=2.31

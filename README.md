@@ -1,91 +1,87 @@
 # Singing Voice Pipeline
 
-Librosa-based preprocessing + stitching utilities that surround a RunPod hosted Seed-VC inference worker. The repository contains:
-
-- **Step A** – local preprocessor (`svtool preprocess`)
-- **Step B** – reference RunPod worker (`runpod_worker/seedvc_worker.py`)
-- **Step C** – local stitcher (`svtool stitch`)
-
-All generated artifacts live inside the `./working` directory unless you pass an explicit `--output`/`--manifest-path`.
+Make a sung vocal sound like a reference voice: same melody, timing and words, different
+singer. Conversion runs [Seed-VC](https://github.com/Plachtaa/seed-vc)'s 44.1 kHz
+pitch-conditioned singing model on a RunPod serverless GPU worker; the local `svtool` CLI
+sends the audio and saves the result. The roadmap is in
+[issue #1](https://github.com/zew1me/singing-voice/issues/1).
 
 ## Requirements & installation
 
-This project is managed with [`uv`](https://github.com/astral-sh/uv). Install dependencies locally:
+This project is managed with [`uv`](https://github.com/astral-sh/uv):
 
 ```bash
-uv venv
-source .venv/bin/activate
-uv pip install -e .
-# add HTTP client helpers for RunPod submissions
-uv pip install -e .[runpod]
+uv sync
+uv pip install -e .[runpod]   # requests, for talking to RunPod
 ```
 
-## Usage
-
-### Step A – Preprocess locally
+## Convert a vocal
 
 ```bash
-svtool preprocess input.wav \
-  --workdir ./working \
-  --chunk-seconds 12 \
-  --overlap-seconds 1.5 \
-  --silence-threshold-db -40
+export RUNPOD_API_KEY=...            # RunPod API key
+export RUNPOD_ENDPOINT_ID=...        # the Seed-VC serverless endpoint
+svtool convert vocals.wav --reference target_voice.wav --start-s 45 --duration-s 30
 ```
 
-The command trims silence, chunks audio, base64-encodes each chunk, and writes a manifest JSON to `working/<stem_timestamp>/manifest.json` (or the path you pass via `--manifest-path`).
+- `SOURCE` is the sung vocal (a Demucs stem is fine; bleed and backing vocals come through
+  as artefacts until input cleaning lands).
+- `--reference` is a clean clip of the target voice. The first 25 s are used.
+- Writes `working/<source>_seedvc_rNN.wav` (24-bit, 44.1 kHz, mono) plus a `.json` sidecar
+  with the options, levels and timings. Existing files are never overwritten.
+- The result has exactly the source excerpt's duration and lines up with it sample for
+  sample, so it can replace the original clip at the same position.
+- `--semitone-shift` takes whole octaves only (`-24, -12, 0, 12, 24`) so the vocal stays in
+  the song's key. The source's melody is never moved toward the reference's pitch range.
+- `--diffusion-steps` (default 40; upstream suggests 30-50 for singing) and
+  `--inference-cfg-rate` (default 0.7) pass through to Seed-VC.
+- Levels: the model sings at the reference's level whatever the source's level, and its
+  vocoder clamps at full scale. The worker brings the reference to -32 dBFS active RMS
+  first, then gain-matches the result to the source.
 
-### Step B – Seed-VC conversion on RunPod
+Audio travels inline as base64 FLAC. RunPod caps a `/run` request at 10 MB, so about a
+minute of vocal fits; `convert` refuses larger requests. The worker already accepts
+`{"url": ...}` inputs and an `output.put_url` (presigned URLs) for full songs; the client
+side of that needs a storage bucket.
 
-- Build a RunPod image that contains Seed-VC and copy `runpod_worker/seedvc_worker.py` into it.
-- The worker loads the manifest from Step A, performs Seed-VC inference for each chunk, and responds with:
+## RunPod worker
 
-```json
-{
-  "sample_rate": 16000,
-  "converted_chunks": [{"chunk_id": "...", "audio_b64": "...", "start": 0, "end": 18000}]
-}
-```
+`runpod_worker/` is built by RunPod from this repo (`runpod_worker/Dockerfile`, build
+context: repository root):
 
-- To call the worker from your laptop (HTTP serverless endpoint):
+- `engine.py` loads Seed-VC's f0 44.1 kHz model once per worker and converts whole vocals
+  with upstream's own 30 s windowing.
+- `handler.py` is the serverless entrypoint. Job input:
+
+  ```json
+  {
+    "source": {"b64": "<base64 audio file>"},
+    "reference": {"url": "https://..."},
+    "output": {"put_url": "https://..."},
+    "options": {"diffusion_steps": 40, "inference_cfg_rate": 0.7, "semitone_shift": 0}
+  }
+  ```
+
+  Each audio input is `{"b64": ...}` or `{"url": ...}`; `output` is optional (default:
+  inline). It returns `sample_rate`, `num_samples`, `audio_b64` or `output_url`, `levels`,
+  `engine` and `timing_s`, or `{"error": "CODE: message"}`.
+- The image pins Seed-VC to a commit (`SEED_VC_REF`), installs a curated dependency list
+  instead of upstream's `requirements.txt`, and bakes all weights in at build time, so cold
+  starts never download from Hugging Face.
+- Optional env: `SEEDVC_CHECKPOINT` + `SEEDVC_CONFIG` for a fine-tuned model.
+
+Seed-VC is GPL-3.0.
+
+## Older chunked flow
+
+`svtool preprocess` and `svtool stitch` are the earlier fixed-window chunker and stitcher.
+The worker no longer takes their manifests (Seed-VC windows long audio itself); they stay
+until phrase-based splitting replaces them.
+
+## Development
 
 ```bash
-svtool submit-runpod working/<session>/manifest.json \
-  --endpoint https://api.runpod.io/... \
-  --api-key $RUNPOD_API_KEY \
-  --output working/converted_manifest.json
+uv run pytest
 ```
 
-### Step C – Stitch locally
-
-```bash
-svtool stitch working/converted_manifest.json --output working/final.wav
-```
-
-The stitcher respects the original chunk offsets, crossfades overlaps, and emits a WAV file at the requested sample rate.
-
-## Customisation
-
-- All commands expose knobs for chunk size, overlap, silence threshold, minimum chunk duration, crossfade seconds, etc.
-- Override the working directory via `--workdir ./another/path`.
-- `submit-runpod` only imports `requests` when executed, so local preprocessing/stitching remain lightweight.
-
-## RunPod worker notes
-
-`runpod_worker/seedvc_worker.py` contains a pure function `convert_manifest` that expects:
-
-- a parsed manifest (`PreprocessManifest`)
-- a reference/target voice WAV path
-- a Seed-VC checkpoint path
-
-The helper decodes chunk audio, calls `seed_vc.inference.inference_pipeline`, returns a `ConvertedManifest`, and reuses the same JSON format consumed by the stitcher.
-
-## Seed-VC references
-
-- [Seed-VC singing voice conversion overview](https://deepwiki.com/Plachtaa/seed-vc/4.2-singing-voice-conversion) – walkthrough of checkpoints, inference scripts, and expected inputs the worker relies on.
-- [Seed-VC training & fine-tuning](https://deepwiki.com/Plachtaa/seed-vc/5-training-and-fine-tuning) – outlines how to customize checkpoints that you later bundle into the RunPod image.
-
-## Next steps
-
-- Generate Dockerfiles for the RunPod worker image and/or a CPU-only local helper.
-- Extend the CLI to parallelize chunk submissions across multiple RunPod pods.
-- Integrate storage upload/download (e.g., S3) around the manifest JSON if remote orchestration is needed.
+Tests cover the transport, the handler contract (with a fake engine), option validation,
+level matching and the client. The model itself is checked by running a real conversion.

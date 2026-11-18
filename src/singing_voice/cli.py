@@ -9,6 +9,12 @@ import typer
 from .convert_cli import register as register_convert
 from .score_cli import register as register_score
 from .preprocess import PreprocessorConfig, preprocess_audio_file
+from .sibilance import (
+    analyze_sibilance,
+    analyze_with_openai,
+    build_local_recommendations,
+    write_sibilance_report,
+)
 from .stitch import StitchConfig, stitch_manifest_to_file
 from .workdir import DEFAULT_WORKDIR, SessionPaths
 
@@ -73,6 +79,65 @@ def stitch(
     cfg = StitchConfig(sample_rate=sample_rate, crossfade_seconds=crossfade_seconds)
     path = stitch_manifest_to_file(converted_manifest, output_path, config=cfg)
     typer.echo(f"Created {path}")
+
+
+@app.command("analyze-sibilance")
+def analyze_sibilance_cmd(
+    source_audio: Path = typer.Argument(..., help="Voice recording to shape."),
+    target_audio: Path = typer.Argument(..., help="Reference voice recording."),
+    sample_rate: int = typer.Option(44_100, help="Analysis sample rate."),
+    output_path: Path = typer.Option(
+        DEFAULT_WORKDIR / "sibilance_report.json",
+        "--output",
+        help="Where to write the analysis JSON.",
+    ),
+    use_openai: bool = typer.Option(
+        False,
+        "--openai",
+        help="Request extra recommendations from OpenAI using local metrics.",
+    ),
+    api_key: Optional[str] = typer.Option(
+        None,
+        envvar="OPENAI_API_KEY",
+        help="OpenAI API key (or set OPENAI_API_KEY).",
+    ),
+    model: str = typer.Option("gpt-4.1-mini", help="OpenAI model for remote recommendations."),
+    timeout: int = typer.Option(60, help="OpenAI HTTP timeout in seconds."),
+):
+    """Analyze and compare sibilance between two voice recordings."""
+
+    source_audio = source_audio.expanduser().resolve()
+    target_audio = target_audio.expanduser().resolve()
+    output_path = output_path.expanduser().resolve()
+
+    source_metrics = analyze_sibilance(source_audio, sample_rate=sample_rate)
+    target_metrics = analyze_sibilance(target_audio, sample_rate=sample_rate)
+    local_recommendations = build_local_recommendations(source_metrics, target_metrics)
+
+    openai_recommendations = None
+    if use_openai:
+        if not api_key:
+            raise typer.BadParameter(
+                "OPENAI_API_KEY is required when using --openai.",
+                param_hint="--openai",
+            )
+        openai_recommendations = analyze_with_openai(
+            source=source_metrics,
+            target=target_metrics,
+            local_recommendations=local_recommendations,
+            api_key=api_key,
+            model=model,
+            timeout=timeout,
+        )
+
+    write_sibilance_report(
+        output_path,
+        source=source_metrics,
+        target=target_metrics,
+        local_recommendations=local_recommendations,
+        openai_recommendations=openai_recommendations,
+    )
+    typer.echo(f"Wrote sibilance report to {output_path}")
 
 
 if __name__ == "__main__":

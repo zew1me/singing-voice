@@ -26,6 +26,29 @@ def test_score_command_writes_report_next_to_output(tmp_path, monkeypatch):
     assert report["melody"]["median_abs_cents"] < 10
 
 
+def test_source_override_keeps_the_sidecar_reference_and_shift(tmp_path, monkeypatch):
+    monkeypatch.setattr(score_cli, "_load_models", lambda timbre, words, whisper_model: Models())
+    seen = {}
+
+    def fake_score(inputs, models, timbre, words):
+        seen["inputs"] = inputs
+        return {"summary": {}}
+
+    monkeypatch.setattr(score_cli, "score", fake_score)
+    sf.write(tmp_path / "src.wav", np.zeros(44_100, dtype=np.float32), 44_100)
+    sf.write(tmp_path / "ref.wav", np.zeros(44_100, dtype=np.float32), 44_100)
+    sf.write(tmp_path / "out.wav", np.zeros(44_100, dtype=np.float32), 44_100)
+    (tmp_path / "out.json").write_text(json.dumps({
+        "options": {"semitone_shift": 12}, "reference": str(tmp_path / "ref.wav"),
+        "source_excerpt": {"path": "/elsewhere/original.wav", "start_s": 30, "duration_s": 1},
+    }))
+    result = runner.invoke(app, ["score", str(tmp_path / "out.wav"), "--source", str(tmp_path / "src.wav"), "--no-timbre", "--no-words"])
+    assert result.exit_code == 0, result.output
+    inputs = seen["inputs"]
+    assert inputs.source == tmp_path / "src.wav" and inputs.start_s == 0.0 and inputs.duration_s == 1.0
+    assert inputs.reference == tmp_path / "ref.wav" and inputs.semitone_shift == 12
+
+
 def test_score_without_sidecar_or_source_is_a_usage_error(tmp_path):
     sf.write(tmp_path / "out.wav", np.zeros(4410, dtype=np.float32), 44_100)
     result = runner.invoke(app, ["score", str(tmp_path / "out.wav")])

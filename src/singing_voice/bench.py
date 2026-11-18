@@ -32,6 +32,8 @@ CLIP_KINDS = ("clean", "bleed", "harmonies", "other")
 MAX_CLIP_SECONDS = 60.0
 SUMMARY_FILE = "summary.json"
 RUN_FILE = "run.json"
+# A clip named like a run-level file would have its sidecar overwritten.
+RESERVED_CLIP_IDS = frozenset({Path(RUN_FILE).stem, Path(SUMMARY_FILE).stem})
 
 
 class TestSetError(ValueError):
@@ -81,6 +83,8 @@ class TestSet:
             clip_id = raw.get("id")
             if not isinstance(clip_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", clip_id):
                 raise TestSetError(f"{where}.id must be letters, digits, '-' or '_' (it names files)")
+            if clip_id in RESERVED_CLIP_IDS:
+                raise TestSetError(f"{where}.id {clip_id!r} is reserved: {sorted(RESERVED_CLIP_IDS)} name run-level files")
             if clip_id in {c.id for c in clips}:
                 raise TestSetError(f"duplicate clip id {clip_id!r}")
             kind = raw.get("kind", "other")
@@ -189,11 +193,10 @@ def rescore_run(run_dir: Path, score: ScoreFn, log: Callable[[str], None] = lamb
         log(f"[{clip_id}] scoring")
         try:
             report = score(ScoreInputs.from_sidecar(out))
+            report_path(out).write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
         except Exception as exc:  # noqa: BLE001
             errors[clip_id] = f"score: {type(exc).__name__}: {exc}"
             log(f"[{clip_id}] scoring failed: {exc}")
-            continue
-        report_path(out).write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     run_info["errors"] = errors
     (run_dir / RUN_FILE).write_text(json.dumps(run_info, indent=2) + "\n")
     summary = summarize_run(run_dir)
@@ -232,12 +235,12 @@ def load_summary(path: Path) -> Dict[str, Any]:
 
 
 def _verdict(direction: Any, before: float, after: float) -> str:
+    if direction == "abs":
+        before, after = abs(before), abs(after)
+        direction = -1
     if direction == 0 or before == after:
         return ""
-    if direction == "abs":
-        better = abs(after) < abs(before)
-    else:
-        better = (after - before) * direction > 0
+    better = (after - before) * direction > 0
     return "better" if better else "worse"
 
 

@@ -28,7 +28,7 @@ def _load_models(timbre: bool, words: bool, whisper_model: str):
 
 def score_command(
     output: Path = typer.Argument(..., exists=True, dir_okay=False, help="Converted WAV (from svtool convert)."),
-    source: Optional[Path] = typer.Option(None, "--source", exists=True, dir_okay=False, help="Input vocal. Default: from OUTPUT's .json sidecar."),
+    source: Optional[Path] = typer.Option(None, "--source", exists=True, dir_okay=False, help="Input vocal. Default: from OUTPUT's .json sidecar. With --source, the excerpt is --start-s/--duration-s (default 0 and OUTPUT's length); reference and shift still come from the sidecar."),
     reference: Optional[Path] = typer.Option(None, "--reference", exists=True, dir_okay=False, help="Reference voice. Default: from the sidecar."),
     start_s: Optional[float] = typer.Option(None, "--start-s", help="Excerpt start in the source, seconds. Default: from the sidecar, else 0."),
     duration_s: Optional[float] = typer.Option(None, "--duration-s", help="Excerpt length, seconds. Default: from the sidecar, else OUTPUT's length."),
@@ -49,6 +49,11 @@ def score_command(
         import soundfile as sf  # noqa: PLC0415
 
         inputs = ScoreInputs(output=output, source=source.expanduser().resolve(), duration_s=sf.info(str(output)).duration)
+        try:  # a different source, but the sidecar still knows the reference and the shift
+            sidecar = ScoreInputs.from_sidecar(output)
+            inputs.reference, inputs.semitone_shift = sidecar.reference, sidecar.semitone_shift
+        except (FileNotFoundError, ValueError):
+            pass
     if reference is not None:
         inputs.reference = reference.expanduser().resolve()
     if start_s is not None:

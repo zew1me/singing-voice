@@ -47,6 +47,14 @@ def test_melody_metrics_allow_for_the_requested_octave_shift():
     assert melody_metrics(source, output)["median_abs_cents"] == 1200.0
 
 
+def test_voicing_counts_frames_missing_from_the_shorter_track_as_unvoiced():
+    m = melody_metrics(track([220, 220, 440, 440]), track([220, 220]))
+    assert m["frames"] == 4 and m["compared_frames"] == 2
+    assert m["voicing_recall_pct"] == 50.0 and m["voicing_agreement_pct"] == 50.0
+    m = melody_metrics(track([220, 220]), track([220, 220, 440, 440]))
+    assert m["voicing_false_alarm_pct"] == 100.0 and m["voicing_agreement_pct"] == 50.0
+
+
 def test_melody_metrics_with_nothing_sung():
     m = melody_metrics(track([np.nan] * 4), track([np.nan] * 4))
     assert m["median_abs_cents"] is None and m["within_50_cents_pct"] is None
@@ -60,6 +68,25 @@ def test_pitch_tracking_follows_a_sung_line():
     assert m["compared_frames"] > 150
     assert m["median_abs_cents"] == pytest.approx(40, abs=8)
     assert m["voicing_agreement_pct"] > 90
+
+
+def test_pitch_tracking_follows_an_octave_shift_above_the_unshifted_range():
+    high = [(76, 0.6), (None, 0.2), (79, 0.6)]  # E5, G5: an octave up is 1319 and 1568 Hz
+    m = melody_metrics(track_pitch(sung(high, SR)), track_pitch(sung(high, SR, cents=1200, seed=1), semitone_shift=12), semitone_shift=12)
+    assert m["median_abs_cents"] == pytest.approx(0, abs=10)
+    assert m["voicing_recall_pct"] > 85
+
+
+def test_pitch_tracking_two_octaves_down_still_runs():
+    low = [(45, 0.8)]  # A2, two octaves down is 27.5 Hz
+    m = melody_metrics(track_pitch(sung(low, SR)), track_pitch(sung(low, SR, cents=-2400, seed=1), semitone_shift=-24), semitone_shift=-24)
+    assert m["compared_frames"] > 0
+
+
+def test_alignment_of_silence_is_unavailable():
+    silence = np.zeros(2 * SR, dtype=np.float32)
+    assert alignment_lag(silence, silence) == {"lag_ms": None, "envelope_correlation": None}
+    assert alignment_lag(sung(PHRASE, SR), silence)["lag_ms"] is None
 
 
 @pytest.mark.parametrize("delay_s", [0.0, 0.05, -0.12])

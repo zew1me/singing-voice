@@ -125,16 +125,26 @@ class PitchTrack:
         return HOP / ANALYSIS_SAMPLE_RATE
 
 
-def track_pitch(audio_16k: np.ndarray) -> PitchTrack:
-    """pYIN f0 at 10 ms hops over a singing range (C2 to C#6)."""
+def track_pitch(audio_16k: np.ndarray, semitone_shift: int = 0) -> PitchTrack:
+    """pYIN f0 at 10 ms hops over a singing range (C2 to C#6), moved by ``semitone_shift``.
+
+    The output of an octave-shifted conversion is tracked over the shifted range, so a note
+    sung an octave up near the top of the range is not lost above ``fmax``.
+    """
     import librosa  # noqa: PLC0415
 
+    ratio = 2 ** (semitone_shift / 12)
+    fmin, fmax = FMIN_HZ * ratio, FMAX_HZ * ratio
+    # pYIN needs frame_length - frame_length // 2 > the longest period (sr / fmin).
+    frame_length = 1024
+    while frame_length // 2 <= ANALYSIS_SAMPLE_RATE / fmin + 1:
+        frame_length *= 2
     f0, voiced, _ = librosa.pyin(
         np.asarray(audio_16k, dtype=np.float32),
-        fmin=FMIN_HZ,
-        fmax=FMAX_HZ,
+        fmin=fmin,
+        fmax=min(fmax, ANALYSIS_SAMPLE_RATE / 2 - 1),
         sr=ANALYSIS_SAMPLE_RATE,
-        frame_length=1024,
+        frame_length=frame_length,
         hop_length=HOP,
         center=True,
     )
@@ -147,10 +157,14 @@ def _pct(numerator: float, denominator: float) -> Optional[float]:
 
 def melody_metrics(source: PitchTrack, output: PitchTrack, semitone_shift: int = 0) -> Dict[str, Any]:
     """Output f0 against input f0 in cents (after the requested shift), and voicing agreement."""
-    n = min(len(source.voiced), len(output.voiced))
-    sv, ov = source.voiced[:n], output.voiced[:n]
-    both = sv & ov & np.isfinite(source.f0_hz[:n]) & np.isfinite(output.f0_hz[:n])
-    cents = 1200 * np.log2(output.f0_hz[:n][both] / source.f0_hz[:n][both]) - 100 * semitone_shift
+    # Voicing covers the longer timeline; frames one track lacks count as unvoiced.
+    n = max(len(source.voiced), len(output.voiced))
+    sv = np.pad(source.voiced, (0, n - len(source.voiced)))
+    ov = np.pad(output.voiced, (0, n - len(output.voiced)))
+    f0_s = np.pad(source.f0_hz, (0, n - len(source.f0_hz)), constant_values=np.nan)
+    f0_o = np.pad(output.f0_hz, (0, n - len(output.f0_hz)), constant_values=np.nan)
+    both = sv & ov & np.isfinite(f0_s) & np.isfinite(f0_o)
+    cents = 1200 * np.log2(f0_o[both] / f0_s[both]) - 100 * semitone_shift
     abs_cents = np.abs(cents)
     have = cents.size > 0
     return {
@@ -189,6 +203,8 @@ def alignment_lag(source_16k: np.ndarray, output_16k: np.ndarray, max_lag_s: flo
     if n < 2 * max_lag + 10:
         max_lag = max(0, n // 4)
     a, b = a[:n] - a[:n].mean(), b[:n] - b[:n].mean()
+    if n == 0 or not np.any(a) or not np.any(b):  # silence or a constant level: nothing to line up
+        return {"lag_ms": None, "envelope_correlation": None}
     best_lag, best = 0, -np.inf
     for lag in range(-max_lag, max_lag + 1):
         x, y = (a[: n - lag], b[lag:]) if lag >= 0 else (a[-lag:], b[: n + lag])
@@ -328,7 +344,7 @@ def score(inputs: ScoreInputs, models: Optional[Models] = None, timbre: bool = T
         "levels": levels,
         "spectrum": spectrum,
         "alignment": alignment_lag(source_16k, output_16k),
-        "melody": melody_metrics(track_pitch(source_16k), track_pitch(output_16k), inputs.semitone_shift),
+        "melody": melody_metrics(track_pitch(source_16k), track_pitch(output_16k, inputs.semitone_shift), inputs.semitone_shift),
     }
     if not timbre:
         report["timbre"] = {"skipped": "turned off"}

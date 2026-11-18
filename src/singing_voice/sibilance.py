@@ -1,0 +1,184 @@
+"""Sibilance-focused analysis helpers for vocal matching workflows."""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import librosa
+import numpy as np
+
+
+@dataclass
+class SibilanceMetrics:
+    file: str
+    duration_seconds: float
+    sample_rate: int
+    sibilance_ratio_db: float
+    sibilant_frame_ratio: float
+    sibilance_peak_hz: float
+    sibilant_centroid_hz: float
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "file": self.file,
+            "duration_seconds": self.duration_seconds,
+            "sample_rate": self.sample_rate,
+            "sibilance_ratio_db": self.sibilance_ratio_db,
+            "sibilant_frame_ratio": self.sibilant_frame_ratio,
+            "sibilance_peak_hz": self.sibilance_peak_hz,
+            "sibilant_centroid_hz": self.sibilant_centroid_hz,
+        }
+
+
+def analyze_sibilance(path: Path, sample_rate: int = 44_100) -> SibilanceMetrics:
+    audio, sr = librosa.load(path, sr=sample_rate, mono=True)
+    if audio.size == 0:
+        raise ValueError(f"Audio file has no samples: {path}")
+
+    n_fft = 2048
+    hop_length = 512
+    stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
+    magnitude = np.abs(stft)
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
+
+    total_energy_per_frame = np.sum(np.square(magnitude), axis=0) + 1e-12
+    sib_mask = (freqs >= 4_000.0) & (freqs <= 10_000.0)
+    sib_energy_per_frame = np.sum(np.square(magnitude[sib_mask, :]), axis=0) + 1e-12
+
+    sib_ratio = np.clip(sib_energy_per_frame / total_energy_per_frame, 1e-12, 1.0)
+    sibilance_ratio_db = float(10.0 * np.log10(np.mean(sib_ratio)))
+
+    sibilant_frames = sib_ratio > np.quantile(sib_ratio, 0.8)
+    sibilant_frame_ratio = float(np.mean(sibilant_frames))
+
+    sib_profile = np.mean(magnitude[sib_mask, :], axis=1)
+    sib_freqs = freqs[sib_mask]
+    peak_idx = int(np.argmax(sib_profile))
+    sibilance_peak_hz = float(sib_freqs[peak_idx])
+
+    centroids = librosa.feature.spectral_centroid(S=magnitude, sr=sr)[0]
+    if np.any(sibilant_frames):
+        sibilant_centroid_hz = float(np.median(centroids[sibilant_frames]))
+    else:
+        sibilant_centroid_hz = float(np.median(centroids))
+
+    return SibilanceMetrics(
+        file=str(path),
+        duration_seconds=float(audio.size / sr),
+        sample_rate=sr,
+        sibilance_ratio_db=sibilance_ratio_db,
+        sibilant_frame_ratio=sibilant_frame_ratio,
+        sibilance_peak_hz=sibilance_peak_hz,
+        sibilant_centroid_hz=sibilant_centroid_hz,
+    )
+
+
+def build_local_recommendations(source: SibilanceMetrics, target: SibilanceMetrics) -> Dict[str, Any]:
+    delta_db = target.sibilance_ratio_db - source.sibilance_ratio_db
+    peak_delta = target.sibilance_peak_hz - source.sibilance_peak_hz
+    centroid_delta = target.sibilant_centroid_hz - source.sibilant_centroid_hz
+
+    if delta_db > 1.5:
+        gain_hint = "Increase source sibilance presence by ~2-4 dB around target peak."
+    elif delta_db < -1.5:
+        gain_hint = "Reduce source sibilance by ~2-5 dB using a de-esser around source peak."
+    else:
+        gain_hint = "Sibilance level is close; use only subtle EQ/de-ess moves."
+
+    q_hint = "Use Q around 3-6 for surgical EQ moves."
+    timing_hint = "For sharper S, use faster attack; for smoother tails, use slower release."
+
+    return {
+        "delta_sibilance_ratio_db": round(delta_db, 3),
+        "delta_peak_hz": round(peak_delta, 2),
+        "delta_centroid_hz": round(centroid_delta, 2),
+        "source_peak_hz": round(source.sibilance_peak_hz, 2),
+        "target_peak_hz": round(target.sibilance_peak_hz, 2),
+        "suggested_actions": [gain_hint, q_hint, timing_hint],
+    }
+
+
+def analyze_with_openai(
+    source: SibilanceMetrics,
+    target: SibilanceMetrics,
+    local_recommendations: Dict[str, Any],
+    api_key: str,
+    model: str = "gpt-4.1-mini",
+    timeout: int = 60,
+) -> str:
+    try:
+        import requests
+    except ImportError as exc:
+        raise RuntimeError("Install optional dependency group with requests to call OpenAI.") from exc
+
+    prompt = {
+        "task": "Recommend practical Ableton + iZotope settings to make source vocal sibilance match target vocal.",
+        "constraints": [
+            "Assume Ableton Live 12 Intro and iZotope Nectar/Neutron are available.",
+            "Give concrete frequency bands, gain moves, and de-esser settings.",
+            "Prefer actionable steps and avoid vague advice.",
+        ],
+        "source_metrics": source.to_dict(),
+        "target_metrics": target.to_dict(),
+        "local_recommendations": local_recommendations,
+    }
+
+    response = requests.post(
+        "https://api.openai.com/v1/responses",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "input": json.dumps(prompt, indent=2),
+        },
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    payload = response.json()
+
+    output_text = payload.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+
+    parts: list[str] = []
+    for item in payload.get("output", []):
+        for content in item.get("content", []):
+            text = content.get("text")
+            if text:
+                parts.append(str(text))
+    if parts:
+        return "\n".join(parts).strip()
+
+    raise RuntimeError("OpenAI response did not include text output.")
+
+
+def write_sibilance_report(
+    path: Path,
+    source: SibilanceMetrics,
+    target: SibilanceMetrics,
+    local_recommendations: Dict[str, Any],
+    openai_recommendations: Optional[str] = None,
+) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: Dict[str, Any] = {
+        "source": source.to_dict(),
+        "target": target.to_dict(),
+        "local_recommendations": local_recommendations,
+    }
+    if openai_recommendations:
+        payload["openai_recommendations"] = openai_recommendations
+    path.write_text(json.dumps(payload, indent=2))
+    return path
+
+
+__all__ = [
+    "SibilanceMetrics",
+    "analyze_sibilance",
+    "build_local_recommendations",
+    "analyze_with_openai",
+    "write_sibilance_report",
+]

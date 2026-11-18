@@ -43,6 +43,52 @@ minute of vocal fits; `convert` refuses larger requests. The worker already acce
 `{"url": ...}` inputs and an `output.put_url` (presigned URLs) for full songs; the client
 side of that needs a storage bucket.
 
+## Score a conversion
+
+```bash
+svtool score working/vocals_seedvc_r01.wav
+```
+
+Reads the source excerpt, reference and options from the `.json` sidecar `convert` wrote
+and writes `working/vocals_seedvc_r01.score.json` (replaced on re-scoring). For a file that
+did not come from `convert`, pass `--source` (and `--reference`, `--start-s`,
+`--duration-s`, `--semitone-shift`).
+
+| Section | What it measures | Want |
+| --- | --- | --- |
+| `melody` | pYIN f0 of output vs input on frames both sing, in cents (after the requested octave shift); share within 50 cents; gross (> 600 cents) errors; voiced/unvoiced agreement | ~0 cents, high agreement |
+| `alignment` | lag of the output's energy envelope against the input's | 0 ms |
+| `levels` | active RMS, peak, clipped samples of input, output, reference | output level ≈ input, no clipping |
+| `spectrum` | level-independent band profile (low, low-mid, presence, sibilance, air; centroid) and band distances between the three | output closer to the reference than the input was |
+| `timbre` | speaker-embedding cosine similarity (SpeechBrain ECAPA): output↔reference, output↔input, and the input↔reference baseline | up, down, `moved_toward_reference` > 0 |
+| `words` | faster-whisper transcripts of input and output, WER of output against input | low WER |
+
+`timbre` and `words` need the `score` extra (`uv pip install -e '.[score]'`, pulls torch)
+and download their weights from Hugging Face on first use; without them those sections
+say why they were skipped and the rest of the report is still written. Both models were
+trained on speech, so read their numbers by comparing runs, not as absolutes. `summary`
+holds the headline numbers.
+
+## Test set and benchmark runs
+
+`testsets/m1.json` names three fixed excerpts and the reference voice: a clean vocal, a
+Demucs stem with bleed, and a stem with harmonies. Put the audio in `test_files/m1/`
+(git-ignored) under the names the file uses, or edit the paths (relative to the JSON file)
+and `start_s`/`duration_s` (at most 60 s each).
+
+```bash
+svtool bench run testsets/m1.json --label baseline --dry-run   # check files and excerpts
+svtool bench run testsets/m1.json --label baseline              # convert + score every clip
+svtool bench run testsets/m1.json --label steps50 --diffusion-steps 50
+svtool bench compare working/bench/<baseline-run> working/bench/<steps50-run>
+svtool bench rescore working/bench/<run>                        # e.g. after installing .[score]
+```
+
+A run goes in `working/bench/<timestamp>_<label>/` with `<clip>.wav`, its sidecar,
+`<clip>.score.json`, `run.json` and `summary.json`. A clip that fails is recorded and the
+run continues. `compare` prints before/after/delta per clip and metric and marks each
+change better or worse.
+
 ## RunPod worker
 
 `runpod_worker/` is built by RunPod from this repo (`runpod_worker/Dockerfile`, build
@@ -84,4 +130,6 @@ uv run pytest
 ```
 
 Tests cover the transport, the handler contract (with a fake engine), option validation,
-level matching and the client. The model itself is checked by running a real conversion.
+level matching, the client, the fixed-window split and reassembly, the scoring metrics (on
+synthetic sung lines, with fake embedding and transcription models) and the benchmark
+runner. The model itself is checked by running a real conversion and scoring it.

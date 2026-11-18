@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from .convert_client import ConvertRequest, build_payload, next_revision_path, run_job, save_result
+from .convert_client import ConvertFailed, ConvertRequest, convert_to_file, next_revision_path
 from .transport import TransportError
 from .workdir import DEFAULT_WORKDIR
 
@@ -44,26 +44,22 @@ def convert(
         start_s=start_s,
         duration_s=duration_s,
     )
-    try:
-        payload = build_payload(request)
-    except TransportError as exc:
-        raise typer.BadParameter(str(exc)) from exc
 
     def report(state: str, elapsed: float) -> None:
         typer.echo(f"  {state} after {elapsed:.0f} s", err=True)
 
-    status = run_job(endpoint_id, api_key, payload, timeout_s=timeout_s, on_status=report)
-    output = status.get("output") or {}
-    if status.get("status") != "COMPLETED" or "error" in output:
-        typer.echo(json.dumps({"ok": False, "status": status.get("status"), "error": output.get("error") or status.get("error")}))
-        raise typer.Exit(1)
-
-    meta = save_result(output, out)
-    meta["source_excerpt"] = {"path": str(source), "start_s": start_s, "duration_s": duration_s}
-    meta["reference"] = str(reference)
-    meta["job"] = {"id": status.get("id"), "delay_ms": status.get("delayTime"), "execution_ms": status.get("executionTime")}
-    out.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
+    try:
+        meta = convert_to_file(request, out, endpoint_id, api_key, timeout_s=timeout_s, on_status=report)
+    except TransportError as exc:
+        if exc.code in {"INPUT_TOO_LARGE", "BAD_EXCERPT"}:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(json.dumps({"ok": False, "error": f"{exc.code}: {exc}"}))
+        raise typer.Exit(1) from exc
+    except ConvertFailed as exc:
+        typer.echo(json.dumps({"ok": False, "status": exc.status, "error": exc.error}))
+        raise typer.Exit(1) from exc
     typer.echo(json.dumps({"ok": True, "output": str(out), **meta}))
+    typer.echo(f"  score it: svtool score {out}", err=True)
 
 
 def register(app: typer.Typer) -> None:

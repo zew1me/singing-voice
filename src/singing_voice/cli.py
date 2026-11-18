@@ -7,12 +7,14 @@ from typing import Optional
 import typer
 
 from .convert_cli import register as register_convert
+from .score_cli import register as register_score
 from .preprocess import PreprocessorConfig, preprocess_audio_file
 from .stitch import StitchConfig, stitch_manifest_to_file
 from .workdir import DEFAULT_WORKDIR, SessionPaths
 
 app = typer.Typer(help="Librosa preprocessing + Seed-VC stitching utilities.")
 register_convert(app)
+register_score(app)
 
 
 @app.command()

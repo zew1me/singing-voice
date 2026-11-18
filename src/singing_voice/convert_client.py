@@ -113,8 +113,43 @@ def save_result(output: Dict[str, Any], out_path: Path) -> Dict[str, Any]:
     return meta
 
 
+class ConvertFailed(RuntimeError):
+    def __init__(self, status: Optional[str], error: Any) -> None:
+        super().__init__(f"job {status or 'failed'}: {error}")
+        self.status = status
+        self.error = error
+
+
+def convert_to_file(
+    request: ConvertRequest,
+    out_path: Path,
+    endpoint_id: str,
+    api_key: str,
+    timeout_s: float = 1800,
+    on_status: Optional[Callable[[str, float], None]] = None,
+) -> Dict[str, Any]:
+    """Run one conversion and write ``out_path`` plus a sidecar that names the source excerpt,
+    the reference and the options, which is all ``svtool score`` needs."""
+    if out_path.exists():
+        raise FileExistsError(f"{out_path} exists; outputs are never overwritten")
+    payload = build_payload(request)
+    status = run_job(endpoint_id, api_key, payload, timeout_s=timeout_s, on_status=on_status)
+    output = status.get("output") or {}
+    if status.get("status") != "COMPLETED" or not isinstance(output, dict) or "error" in output:
+        error = output.get("error") if isinstance(output, dict) else output
+        raise ConvertFailed(status.get("status"), error or status.get("error"))
+    meta = save_result(output, out_path)
+    meta["source_excerpt"] = {"path": str(request.source), "start_s": request.start_s, "duration_s": request.duration_s}
+    meta["reference"] = str(request.reference)
+    meta["job"] = {"id": status.get("id"), "delay_ms": status.get("delayTime"), "execution_ms": status.get("executionTime")}
+    out_path.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
+    return meta
+
+
 __all__ = [
+    "ConvertFailed",
     "ConvertRequest",
+    "convert_to_file",
     "build_payload",
     "next_revision_path",
     "read_excerpt",

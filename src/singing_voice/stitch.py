@@ -38,7 +38,7 @@ def stitch_chunks(chunks: Iterable[ChunkPayload], cfg: StitchConfig) -> np.ndarr
     ordered = sorted(chunks, key=lambda chunk: chunk.start)
     crossfade = int(cfg.crossfade_seconds * cfg.sample_rate)
 
-    buffer = np.zeros(1, dtype=np.float32)
+    buffer = np.zeros(0, dtype=np.float32)
     for item in ordered:
         chunk_audio = _decode_chunk(item, cfg.sample_rate)
         buffer = _place_chunk(buffer, chunk_audio, start=item.start, crossfade=crossfade)
@@ -57,12 +57,15 @@ def _place_chunk(existing: np.ndarray, chunk: np.ndarray, start: int, crossfade:
     if chunk.size == 0:
         return existing
 
+    # Crossfade only over audio already placed; a chunk after a gap (or the first one)
+    # starts at full level instead of fading in from silence.
+    written = existing.size
     end = start + chunk.size
     if end > existing.size:
         pad = end - existing.size
         existing = np.pad(existing, (0, pad))
 
-    overlap = min(crossfade, chunk.size, existing.size - start)
+    overlap = max(0, min(crossfade, chunk.size, written - start))
     if overlap > 0:
         fade = np.linspace(0.0, 1.0, num=overlap, dtype=np.float32)
         keep = 1.0 - fade

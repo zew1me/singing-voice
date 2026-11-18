@@ -1,0 +1,31 @@
+{
+  "name": "m1",
+  "description": "Fixed clips for judging pipeline changes (issue #1, M1). Audio lives in test_files/m1/ (git-ignored); paths are relative to this file. Pick 20-30 s excerpts with sustained notes, a wide-ish range and clear words.",
+  "reference": "../test_files/m1/reference.wav",
+  "clips": [
+    {
+      "id": "clean",
+      "kind": "clean",
+      "source": "../test_files/m1/clean_vocal.wav",
+      "start_s": 0,
+      "duration_s": 25,
+      "notes": "Dry solo vocal recording, no separation."
+    },
+    {
+      "id": "bleed",
+      "kind": "bleed",
+      "source": "../test_files/m1/bleed_stem.wav",
+      "start_s": 0,
+      "duration_s": 25,
+      "notes": "Demucs vocal stem with audible instrument bleed."
+    },
+    {
+      "id": "harmonies",
+      "kind": "harmonies",
+      "source": "../test_files/m1/harmony_stem.wav",
+      "start_s": 0,
+      "duration_s": 25,
+      "notes": "Demucs vocal stem where backing vocals or harmonies sit under the lead."
+    }
+  ]
+}

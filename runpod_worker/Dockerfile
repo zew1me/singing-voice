@@ -24,7 +24,8 @@ RUN git clone https://github.com/Plachtaa/seed-vc.git ${SEED_VC_HOME} \
 WORKDIR /app
 
 COPY runpod_worker/requirements.txt /app/runpod_worker/requirements.txt
-RUN pip install --no-cache-dir --index-url ${TORCH_INDEX} \
+RUN python -m pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir --index-url ${TORCH_INDEX} \
         torch==${TORCH_VERSION} torchaudio==${TORCHAUDIO_VERSION} \
  && pip install --no-cache-dir -r runpod_worker/requirements.txt
 

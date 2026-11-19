@@ -15,7 +15,3 @@ huggingface-hub>=0.28.1,<1.0
 pyyaml
 tqdm
 matplotlib
-
-# RunPod serverless + URL transport
-runpod>=1.6.0
-requests>=2.31

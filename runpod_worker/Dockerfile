@@ -23,14 +23,18 @@ RUN git clone https://github.com/Plachtaa/seed-vc.git ${SEED_VC_HOME} \
 
 WORKDIR /app
 
-COPY runpod_worker/requirements.txt /app/runpod_worker/requirements.txt
 RUN python -m pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir --index-url ${TORCH_INDEX} \
-        torch==${TORCH_VERSION} torchaudio==${TORCHAUDIO_VERSION} \
- && pip install --no-cache-dir -r runpod_worker/requirements.txt
+        torch==${TORCH_VERSION} torchaudio==${TORCHAUDIO_VERSION}
+
+COPY runpod_worker/requirements.txt /app/runpod_worker/requirements.txt
+COPY pyproject.toml README.md /app/
+COPY src /app/src
+RUN pip install --no-cache-dir -r runpod_worker/requirements.txt '.[worker]' \
+ && pip check
 
 # Bake the weights (DiT f0 44k, whisper-small, BigVGAN 44k, RMVPE, CAMPPlus) into the image.
-# Only the engine and this script are copied first, so other code changes keep this layer cached.
+# Copy only the worker files needed to prefetch, not the handler.
 COPY runpod_worker/__init__.py runpod_worker/engine.py runpod_worker/prefetch_weights.py /app/runpod_worker/
 RUN python runpod_worker/prefetch_weights.py
 
@@ -38,9 +42,6 @@ RUN python runpod_worker/prefetch_weights.py
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1
 
-COPY pyproject.toml README.md /app/
-COPY src /app/src
-RUN pip install --no-cache-dir .
 COPY runpod_worker /app/runpod_worker
 
 CMD ["python", "-u", "-m", "runpod_worker.handler"]

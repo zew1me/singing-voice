@@ -22,6 +22,13 @@ dependencies = [
 runpod = [
   "requests>=2.31"
 ]
+# RunPod SDK 2.x pulls in FastAPI's OpenTelemetry exporter (protobuf>=5),
+# which conflicts with Seed-VC's descript-audiotools (protobuf<3.20).
+worker = [
+  "runpod==1.9.1",
+  "fastapi==0.135.4",
+  "requests>=2.31",
+]
 # Model-based sections of `svtool score`: speaker-embedding timbre and Whisper words.
 score = [
   "faster-whisper>=1.0",

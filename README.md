@@ -117,6 +117,22 @@ context: repository root):
 
 Seed-VC is GPL-3.0.
 
+### Preflight the RunPod image locally
+
+With Docker and Buildx running, validate a committed worker change before pushing:
+
+```bash
+./scripts/runpod-preflight             # HEAD
+./scripts/runpod-preflight main        # optional: a branch, tag, or commit
+```
+
+This builds the same Dockerfile RunPod uses, from the selected Git commit (uncommitted
+changes and local audio are excluded). It targets `linux/amd64` even on Apple Silicon,
+installs and checks dependencies, prefetches model weights, and smoke-tests the handler
+import with networking disabled. The build needs internet access and several GB of
+free Docker disk space; under emulation it can take a while. No RunPod credentials or GPU
+are needed. After deployment, run a short real conversion to verify GPU inference.
+
 ## Older chunked flow
 
 `svtool preprocess` and `svtool stitch` are the earlier fixed-window chunker and stitcher.
@@ -126,8 +142,15 @@ until phrase-based splitting replaces them.
 ## Development
 
 ```bash
-uv run pytest
+uv sync --locked
+uv tool install 'lefthook==2.2.2'
+lefthook install
+uv run --locked pytest
 ```
+
+Lefthook checks staged whitespace before commits and runs the locked pytest suite
+before pushes. The Docker preflight is opt-in, so routine pushes don't rebuild the
+worker image.
 
 Tests cover the transport, the handler contract (with a fake engine), option validation,
 level matching, the client, the fixed-window split and reassembly, the scoring metrics (on

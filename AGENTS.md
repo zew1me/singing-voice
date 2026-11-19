@@ -8,6 +8,8 @@
 - `pyproject.toml`: single source of dependency truth. Update optional extras instead of ad-hoc requirements files.
 
 ## Build, Test, and Development Commands
+- `uv tool install 'lefthook==2.2.2' && lefthook install`: enable the staged whitespace check and locked pytest pre-push hook.
+- `./scripts/runpod-preflight [revision]`: opt-in `linux/amd64` image build and offline import smoke test from a Git commit.
 - `uv venv && source .venv/bin/activate`: create/activate the local virtualenv.
 - `uv pip install -e .[runpod]`: install the editable package plus optional HTTP client deps.
 - `svtool preprocess input.wav --workdir working`: run Step A locally; outputs manifest JSON.

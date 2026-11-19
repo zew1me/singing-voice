@@ -1,0 +1,9 @@
+pre-commit:
+  commands:
+    whitespace:
+      run: git diff --cached --check
+
+pre-push:
+  commands:
+    tests:
+      run: uv run --locked pytest -q

@@ -9,6 +9,10 @@ from typing import Any, Dict, Optional
 import librosa
 import numpy as np
 
+SIBILANCE_BAND_HZ = (4_000.0, 10_000.0)
+# The full sibilance band must sit below Nyquist for the ratio to mean the same thing at every rate.
+MIN_SAMPLE_RATE = 20_000
+
 
 @dataclass
 class SibilanceMetrics:
@@ -33,6 +37,11 @@ class SibilanceMetrics:
 
 
 def analyze_sibilance(path: Path, sample_rate: int = 44_100) -> SibilanceMetrics:
+    if sample_rate < MIN_SAMPLE_RATE:
+        raise ValueError(
+            f"Sample rate {sample_rate} Hz cannot represent the {SIBILANCE_BAND_HZ[0]:.0f}-"
+            f"{SIBILANCE_BAND_HZ[1]:.0f} Hz sibilance band; use at least {MIN_SAMPLE_RATE} Hz."
+        )
     audio, sr = librosa.load(path, sr=sample_rate, mono=True)
     if audio.size == 0:
         raise ValueError(f"Audio file has no samples: {path}")
@@ -44,7 +53,7 @@ def analyze_sibilance(path: Path, sample_rate: int = 44_100) -> SibilanceMetrics
     freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
 
     total_energy_per_frame = np.sum(np.square(magnitude), axis=0) + 1e-12
-    sib_mask = (freqs >= 4_000.0) & (freqs <= 10_000.0)
+    sib_mask = (freqs >= SIBILANCE_BAND_HZ[0]) & (freqs <= SIBILANCE_BAND_HZ[1])
     sib_energy_per_frame = np.sum(np.square(magnitude[sib_mask, :]), axis=0) + 1e-12
 
     sib_ratio = np.clip(sib_energy_per_frame / total_energy_per_frame, 1e-12, 1.0)
@@ -176,6 +185,7 @@ def write_sibilance_report(
 
 
 __all__ = [
+    "MIN_SAMPLE_RATE",
     "SibilanceMetrics",
     "analyze_sibilance",
     "build_local_recommendations",

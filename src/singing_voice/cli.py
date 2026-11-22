@@ -10,6 +10,7 @@ from .convert_cli import register as register_convert
 from .score_cli import register as register_score
 from .preprocess import PreprocessorConfig, preprocess_audio_file
 from .sibilance import (
+    MIN_SAMPLE_RATE,
     analyze_sibilance,
     analyze_with_openai,
     build_local_recommendations,
@@ -85,7 +86,11 @@ def stitch(
 def analyze_sibilance_cmd(
     source_audio: Path = typer.Argument(..., help="Voice recording to shape."),
     target_audio: Path = typer.Argument(..., help="Reference voice recording."),
-    sample_rate: int = typer.Option(44_100, help="Analysis sample rate."),
+    sample_rate: int = typer.Option(
+        44_100,
+        min=MIN_SAMPLE_RATE,
+        help=f"Analysis sample rate in Hz (at least {MIN_SAMPLE_RATE} to cover the 4-10 kHz band).",
+    ),
     output_path: Path = typer.Option(
         DEFAULT_WORKDIR / "sibilance_report.json",
         "--output",

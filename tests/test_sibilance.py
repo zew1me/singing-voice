@@ -64,3 +64,32 @@ def test_silent_input_has_no_estimate(tmp_path):
     result = runner.invoke(app, ["analyze-sibilance", str(src), str(silent), "--output", str(tmp_path / "r.json")])
     assert result.exit_code == 1
     assert not (tmp_path / "r.json").exists()
+
+
+def _message(*parts):
+    return {"type": "message", "content": list(parts)}
+
+
+def test_extracts_message_text_and_skips_non_message_items():
+    payload = {
+        "output": [
+            {"type": "reasoning", "summary": []},
+            _message({"type": "output_text", "text": "Cut 7 kHz by 3 dB."}),
+        ]
+    }
+    assert sibilance._extract_output_text(payload) == "Cut 7 kHz by 3 dB."
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {"output": None},
+        {"output": ["nope"]},
+        {"output": [{"type": "message", "content": None}]},
+        {"output": [_message({"type": "output_text", "text": 42})]},
+    ],
+)
+def test_malformed_payloads_raise_response_error(payload):
+    with pytest.raises(RuntimeError, match="OpenAI response"):
+        sibilance._extract_output_text(payload)

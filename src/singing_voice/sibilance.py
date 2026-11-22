@@ -160,18 +160,40 @@ def analyze_with_openai(
         timeout=timeout,
     )
     response.raise_for_status()
-    payload = response.json()
+    return _extract_output_text(response.json())
+
+
+def _extract_output_text(payload: Any) -> str:
+    """Pull the message text out of a Responses API payload, rejecting malformed shapes."""
+    if not isinstance(payload, dict):
+        raise RuntimeError("OpenAI response was not a JSON object.")
 
     output_text = payload.get("output_text")
     if isinstance(output_text, str) and output_text.strip():
         return output_text.strip()
 
+    output = payload.get("output", [])
+    if not isinstance(output, list):
+        raise RuntimeError("OpenAI response 'output' was not a list.")
     parts: list[str] = []
-    for item in payload.get("output", []):
-        for content in item.get("content", []):
-            text = content.get("text")
+    for item in output:
+        if not isinstance(item, dict):
+            raise RuntimeError("OpenAI response output item was not an object.")
+        if item.get("type", "message") != "message":
+            continue  # reasoning, tool calls, ...
+        content = item.get("content", [])
+        if not isinstance(content, list):
+            raise RuntimeError("OpenAI response message content was not a list.")
+        for part in content:
+            if not isinstance(part, dict):
+                raise RuntimeError("OpenAI response content part was not an object.")
+            if part.get("type", "output_text") != "output_text":
+                continue  # refusals and other non-text parts
+            text = part.get("text")
+            if not isinstance(text, str):
+                raise RuntimeError("OpenAI response output_text part had no string text.")
             if text:
-                parts.append(str(text))
+                parts.append(text)
     if parts:
         return "\n".join(parts).strip()
 

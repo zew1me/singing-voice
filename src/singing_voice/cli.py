@@ -82,6 +82,15 @@ def stitch(
     typer.echo(f"Created {path}")
 
 
+def _same_file(a: Path, b: Path) -> bool:
+    if a == b:
+        return True
+    try:
+        return a.samefile(b)
+    except OSError:
+        return False
+
+
 @app.command("analyze-sibilance")
 def analyze_sibilance_cmd(
     source_audio: Path = typer.Argument(..., help="Voice recording to shape."),
@@ -114,6 +123,12 @@ def analyze_sibilance_cmd(
     source_audio = source_audio.expanduser().resolve()
     target_audio = target_audio.expanduser().resolve()
     output_path = output_path.expanduser().resolve()
+    for audio in (source_audio, target_audio):
+        if _same_file(output_path, audio):
+            raise typer.BadParameter(
+                f"Report path would overwrite input recording {audio}.",
+                param_hint="--output",
+            )
 
     source_metrics = analyze_sibilance(source_audio, sample_rate=sample_rate)
     target_metrics = analyze_sibilance(target_audio, sample_rate=sample_rate)

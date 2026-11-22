@@ -202,8 +202,9 @@ def _extract_output_text(payload: Any) -> str:
                 raise RuntimeError("OpenAI response output_text part had no string text.")
             if text:
                 parts.append(text)
-    if parts:
-        return "\n".join(parts).strip()
+    text = "\n".join(parts).strip()
+    if text:
+        return text
 
     raise RuntimeError("OpenAI response did not include text output.")
 

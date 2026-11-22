@@ -108,3 +108,9 @@ def test_incomplete_generation_is_not_presented_as_complete():
     }
     with pytest.raises(RuntimeError, match="'incomplete' \\(max_output_tokens\\)"):
         sibilance._extract_output_text(payload)
+
+
+def test_whitespace_only_text_counts_as_no_text():
+    payload = {"output": [_message({"type": "output_text", "text": " \n "})]}
+    with pytest.raises(RuntimeError, match="did not include text"):
+        sibilance._extract_output_text(payload)

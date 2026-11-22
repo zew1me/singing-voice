@@ -168,6 +168,14 @@ def _extract_output_text(payload: Any) -> str:
     if not isinstance(payload, dict):
         raise RuntimeError("OpenAI response was not a JSON object.")
 
+    status = payload.get("status")
+    if status is not None and status != "completed":
+        details = payload.get("incomplete_details") or payload.get("error")
+        reason = details.get("reason") or details.get("message") if isinstance(details, dict) else None
+        raise RuntimeError(
+            f"OpenAI response status was {status!r}" + (f" ({reason})" if reason else "") + "; no recommendations used."
+        )
+
     output_text = payload.get("output_text")
     if isinstance(output_text, str) and output_text.strip():
         return output_text.strip()

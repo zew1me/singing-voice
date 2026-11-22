@@ -93,3 +93,18 @@ def test_extracts_message_text_and_skips_non_message_items():
 def test_malformed_payloads_raise_response_error(payload):
     with pytest.raises(RuntimeError, match="OpenAI response"):
         sibilance._extract_output_text(payload)
+
+
+def test_completed_status_is_accepted():
+    payload = {"status": "completed", "output": [_message({"type": "output_text", "text": "ok"})]}
+    assert sibilance._extract_output_text(payload) == "ok"
+
+
+def test_incomplete_generation_is_not_presented_as_complete():
+    payload = {
+        "status": "incomplete",
+        "incomplete_details": {"reason": "max_output_tokens"},
+        "output": [_message({"type": "output_text", "text": "Cut 7 kHz by"})],
+    }
+    with pytest.raises(RuntimeError, match="'incomplete' \\(max_output_tokens\\)"):
+        sibilance._extract_output_text(payload)

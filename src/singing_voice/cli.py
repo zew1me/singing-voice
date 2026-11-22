@@ -11,6 +11,7 @@ from .score_cli import register as register_score
 from .preprocess import PreprocessorConfig, preprocess_audio_file
 from .sibilance import (
     MIN_SAMPLE_RATE,
+    OpenAIRecommendationError,
     analyze_sibilance,
     analyze_with_openai,
     build_local_recommendations,
@@ -108,7 +109,8 @@ def analyze_sibilance_cmd(
     use_openai: bool = typer.Option(
         False,
         "--openai",
-        help="Request extra recommendations from OpenAI using local metrics.",
+        help="Request extra recommendations from OpenAI using local metrics. "
+        "Best effort: if the request fails, the local report is still written.",
     ),
     api_key: Optional[str] = typer.Option(
         None,
@@ -139,20 +141,25 @@ def analyze_sibilance_cmd(
     local_recommendations = build_local_recommendations(source_metrics, target_metrics)
 
     openai_recommendations = None
+    openai_error = None
     if use_openai:
         if not api_key:
             raise typer.BadParameter(
                 "OPENAI_API_KEY is required when using --openai.",
                 param_hint="--openai",
             )
-        openai_recommendations = analyze_with_openai(
-            source=source_metrics,
-            target=target_metrics,
-            local_recommendations=local_recommendations,
-            api_key=api_key,
-            model=model,
-            timeout=timeout,
-        )
+        try:
+            openai_recommendations = analyze_with_openai(
+                source=source_metrics,
+                target=target_metrics,
+                local_recommendations=local_recommendations,
+                api_key=api_key,
+                model=model,
+                timeout=timeout,
+            )
+        except OpenAIRecommendationError as exc:
+            openai_error = str(exc)
+            typer.echo(f"Warning: {exc} Writing the local report only.", err=True)
 
     write_sibilance_report(
         output_path,
@@ -160,6 +167,7 @@ def analyze_sibilance_cmd(
         target=target_metrics,
         local_recommendations=local_recommendations,
         openai_recommendations=openai_recommendations,
+        openai_error=openai_error,
     )
     typer.echo(f"Wrote sibilance report to {output_path}")
 

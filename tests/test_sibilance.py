@@ -114,3 +114,23 @@ def test_whitespace_only_text_counts_as_no_text():
     payload = {"output": [_message({"type": "output_text", "text": " \n "})]}
     with pytest.raises(RuntimeError, match="did not include text"):
         sibilance._extract_output_text(payload)
+
+
+def test_openai_failure_still_writes_the_local_report(tmp_path, monkeypatch):
+    import requests
+
+    class TooManyRequests:
+        def raise_for_status(self):
+            raise requests.HTTPError("429 Client Error: Too Many Requests")
+
+    monkeypatch.setattr(requests, "post", lambda *a, **k: TooManyRequests())
+    src, tgt = _write_pair(tmp_path)
+    out = tmp_path / "report.json"
+    result = runner.invoke(
+        app, ["analyze-sibilance", str(src), str(tgt), "--output", str(out), "--openai", "--api-key", "sk-test"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "429" in result.stderr
+    report = json.loads(out.read_text())
+    assert "local_recommendations" in report and "openai_recommendations" not in report
+    assert "429" in report["openai_error"]

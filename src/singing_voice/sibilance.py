@@ -16,6 +16,10 @@ MIN_SAMPLE_RATE = 20_000
 ACTIVE_FRAME_FLOOR_DB = -60.0
 
 
+class OpenAIRecommendationError(RuntimeError):
+    """The optional OpenAI enrichment failed; the local analysis is still valid."""
+
+
 @dataclass
 class SibilanceMetrics:
     file: str
@@ -133,7 +137,7 @@ def analyze_with_openai(
     try:
         import requests
     except ImportError as exc:
-        raise RuntimeError("Install optional dependency group with requests to call OpenAI.") from exc
+        raise OpenAIRecommendationError("Install optional dependency group with requests to call OpenAI.") from exc
 
     prompt = {
         "task": "Recommend practical Ableton + iZotope settings to make source vocal sibilance match target vocal.",
@@ -147,32 +151,36 @@ def analyze_with_openai(
         "local_recommendations": local_recommendations,
     }
 
-    response = requests.post(
+    try:
+        response = requests.post(
         "https://api.openai.com/v1/responses",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "input": json.dumps(prompt, indent=2),
-        },
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    return _extract_output_text(response.json())
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "input": json.dumps(prompt, indent=2),
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        raise OpenAIRecommendationError(f"OpenAI request failed: {exc}") from exc
+    return _extract_output_text(payload)
 
 
 def _extract_output_text(payload: Any) -> str:
     """Pull the message text out of a Responses API payload, rejecting malformed shapes."""
     if not isinstance(payload, dict):
-        raise RuntimeError("OpenAI response was not a JSON object.")
+        raise OpenAIRecommendationError("OpenAI response was not a JSON object.")
 
     status = payload.get("status")
     if status is not None and status != "completed":
         details = payload.get("incomplete_details") or payload.get("error")
         reason = details.get("reason") or details.get("message") if isinstance(details, dict) else None
-        raise RuntimeError(
+        raise OpenAIRecommendationError(
             f"OpenAI response status was {status!r}" + (f" ({reason})" if reason else "") + "; no recommendations used."
         )
 
@@ -182,31 +190,31 @@ def _extract_output_text(payload: Any) -> str:
 
     output = payload.get("output", [])
     if not isinstance(output, list):
-        raise RuntimeError("OpenAI response 'output' was not a list.")
+        raise OpenAIRecommendationError("OpenAI response 'output' was not a list.")
     parts: list[str] = []
     for item in output:
         if not isinstance(item, dict):
-            raise RuntimeError("OpenAI response output item was not an object.")
+            raise OpenAIRecommendationError("OpenAI response output item was not an object.")
         if item.get("type", "message") != "message":
             continue  # reasoning, tool calls, ...
         content = item.get("content", [])
         if not isinstance(content, list):
-            raise RuntimeError("OpenAI response message content was not a list.")
+            raise OpenAIRecommendationError("OpenAI response message content was not a list.")
         for part in content:
             if not isinstance(part, dict):
-                raise RuntimeError("OpenAI response content part was not an object.")
+                raise OpenAIRecommendationError("OpenAI response content part was not an object.")
             if part.get("type", "output_text") != "output_text":
                 continue  # refusals and other non-text parts
             text = part.get("text")
             if not isinstance(text, str):
-                raise RuntimeError("OpenAI response output_text part had no string text.")
+                raise OpenAIRecommendationError("OpenAI response output_text part had no string text.")
             if text:
                 parts.append(text)
     text = "\n".join(parts).strip()
     if text:
         return text
 
-    raise RuntimeError("OpenAI response did not include text output.")
+    raise OpenAIRecommendationError("OpenAI response did not include text output.")
 
 
 def write_sibilance_report(
@@ -215,6 +223,7 @@ def write_sibilance_report(
     target: SibilanceMetrics,
     local_recommendations: Dict[str, Any],
     openai_recommendations: Optional[str] = None,
+    openai_error: Optional[str] = None,
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload: Dict[str, Any] = {
@@ -224,12 +233,15 @@ def write_sibilance_report(
     }
     if openai_recommendations:
         payload["openai_recommendations"] = openai_recommendations
+    if openai_error:
+        payload["openai_error"] = openai_error
     path.write_text(json.dumps(payload, indent=2))
     return path
 
 
 __all__ = [
     "MIN_SAMPLE_RATE",
+    "OpenAIRecommendationError",
     "SibilanceMetrics",
     "analyze_sibilance",
     "build_local_recommendations",

@@ -43,3 +43,24 @@ def test_refuses_to_overwrite_an_input_recording(tmp_path, alias):
     assert result.exit_code == 2
     assert "--output" in result.output
     assert tgt.read_bytes() == before
+
+
+def test_silent_tail_does_not_change_the_estimate(tmp_path):
+    line = sung(PHRASE, 44_100)
+    sf.write(tmp_path / "dry.wav", line, 44_100)
+    sf.write(tmp_path / "tail.wav", np.concatenate([line, np.zeros(5 * 44_100, dtype=np.float32)]), 44_100)
+    dry = sibilance.analyze_sibilance(tmp_path / "dry.wav")
+    tail = sibilance.analyze_sibilance(tmp_path / "tail.wav")
+    assert abs(tail.sibilance_ratio_db - dry.sibilance_ratio_db) < 0.5
+    assert tail.sibilance_peak_hz == dry.sibilance_peak_hz
+
+
+def test_silent_input_has_no_estimate(tmp_path):
+    src, _ = _write_pair(tmp_path)
+    silent = tmp_path / "silent.wav"
+    sf.write(silent, np.zeros(44_100, dtype=np.float32), 44_100)
+    with pytest.raises(ValueError, match="silent"):
+        sibilance.analyze_sibilance(silent)
+    result = runner.invoke(app, ["analyze-sibilance", str(src), str(silent), "--output", str(tmp_path / "r.json")])
+    assert result.exit_code == 1
+    assert not (tmp_path / "r.json").exists()

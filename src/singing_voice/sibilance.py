@@ -12,6 +12,8 @@ import numpy as np
 SIBILANCE_BAND_HZ = (4_000.0, 10_000.0)
 # The full sibilance band must sit below Nyquist for the ratio to mean the same thing at every rate.
 MIN_SAMPLE_RATE = 20_000
+# Frames more than this far below the loudest frame count as silence.
+ACTIVE_FRAME_FLOOR_DB = -60.0
 
 
 @dataclass
@@ -52,9 +54,20 @@ def analyze_sibilance(path: Path, sample_rate: int = 44_100) -> SibilanceMetrics
     magnitude = np.abs(stft)
     freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
 
-    total_energy_per_frame = np.sum(np.square(magnitude), axis=0) + 1e-12
+    energy = np.square(magnitude)
+    total_energy_per_frame = np.sum(energy, axis=0)
+    # Silent frames have no spectrum to compare; left in, they read as all-sibilance or skew the quantiles.
+    active = total_energy_per_frame > max(
+        float(np.max(total_energy_per_frame)) * 10 ** (ACTIVE_FRAME_FLOOR_DB / 10), 1e-10
+    )
+    if not np.any(active):
+        raise ValueError(f"No sibilance estimate: audio is silent: {path}")
+    magnitude = magnitude[:, active]
+    energy = energy[:, active]
+    total_energy_per_frame = total_energy_per_frame[active]
+
     sib_mask = (freqs >= SIBILANCE_BAND_HZ[0]) & (freqs <= SIBILANCE_BAND_HZ[1])
-    sib_energy_per_frame = np.sum(np.square(magnitude[sib_mask, :]), axis=0) + 1e-12
+    sib_energy_per_frame = np.sum(energy[sib_mask, :], axis=0)
 
     sib_ratio = np.clip(sib_energy_per_frame / total_energy_per_frame, 1e-12, 1.0)
     sibilance_ratio_db = float(10.0 * np.log10(np.mean(sib_ratio)))

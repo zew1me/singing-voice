@@ -130,8 +130,12 @@ def analyze_sibilance_cmd(
                 param_hint="--output",
             )
 
-    source_metrics = analyze_sibilance(source_audio, sample_rate=sample_rate)
-    target_metrics = analyze_sibilance(target_audio, sample_rate=sample_rate)
+    try:
+        source_metrics = analyze_sibilance(source_audio, sample_rate=sample_rate)
+        target_metrics = analyze_sibilance(target_audio, sample_rate=sample_rate)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
     local_recommendations = build_local_recommendations(source_metrics, target_metrics)
 
     openai_recommendations = None

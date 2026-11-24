@@ -142,7 +142,7 @@ def analyze_with_openai(
     prompt = {
         "task": "Recommend practical Ableton + iZotope settings to make source vocal sibilance match target vocal.",
         "constraints": [
-            "Assume Ableton Live 12 Intro and iZotope Nectar/Neutron are available.",
+            "Assume Ableton Live 12 Standard and iZotope Nectar/Neutron/RX are available.",
             "Give concrete frequency bands, gain moves, and de-esser settings.",
             "Prefer actionable steps and avoid vague advice.",
         ],
